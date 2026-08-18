@@ -316,13 +316,13 @@ def get_unique_destination(directory: Path, file_name: str) -> Path:
         counter += 1
 
 
-def process_xml_file(xml_path: Path, archive_dir: Path, pdf_dir: Path, failed_dir: Path) -> bool:
+def process_xml_file(xml_path: Path, output_dir: Path, failed_dir: Path) -> bool:
     try:
         parsed = parse_xml_file(xml_path)
-        pdf_path = get_unique_destination(pdf_dir, f"{xml_path.stem}.pdf")
+        pdf_path = get_unique_destination(output_dir, f"{xml_path.stem}.pdf")
         build_pdf_report(pdf_path, xml_path, parsed["metadata"], parsed["rows"])
 
-        archived_path = get_unique_destination(archive_dir, xml_path.name)
+        archived_path = get_unique_destination(output_dir, xml_path.name)
         shutil.move(str(xml_path), str(archived_path))
         LOGGER.info("Processed %s -> %s and archived at %s", xml_path.name, pdf_path.name, archived_path.name)
         return True
@@ -334,22 +334,30 @@ def process_xml_file(xml_path: Path, archive_dir: Path, pdf_dir: Path, failed_di
         return False
 
 
-def process_directory(input_dir: Path, archive_dir: Path, pdf_dir: Path, failed_dir: Path) -> None:
-    ensure_directories(input_dir, archive_dir, pdf_dir, failed_dir)
+def process_directory(input_dir: Path, output_dir: Path, failed_dir: Path) -> None:
+    ensure_directories(input_dir, output_dir, failed_dir)
     xml_files = sorted(input_dir.glob("*.xml"))
     if not xml_files:
         LOGGER.info("No XML files found in %s", input_dir)
         return
 
     for xml_file in xml_files:
-        process_xml_file(xml_file, archive_dir, pdf_dir, failed_dir)
+        process_xml_file(xml_file, output_dir, failed_dir)
+
+
+def iter_machine_folders(root_dir: Path) -> List[Path]:
+    folders: List[Path] = []
+    for index in range(1, 10):
+        machine_dir = root_dir / f"{index:03d}"
+        if machine_dir.exists() and machine_dir.is_dir():
+            folders.append(machine_dir)
+    return folders
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Convert sterilization XML logs into PDF reports and archive originals.")
-    parser.add_argument("--input", type=Path, required=True, help="Folder with incoming XML files.")
-    parser.add_argument("--archive", type=Path, required=True, help="Folder for processed XML files.")
-    parser.add_argument("--pdf", type=Path, required=True, help="Folder for generated PDF reports.")
+    parser = argparse.ArgumentParser(description="Convert sterilization XML logs into PDF reports and archive originals in _edit folders.")
+    parser.add_argument("--root", type=Path, default=Path(r"D:\TDOC_Export"), help="Root directory containing machine folders 001..009.")
+    parser.add_argument("--input", type=Path, default=None, help="Optional specific input folder to process instead of all 001..009 machine folders.")
     parser.add_argument("--failed", type=Path, default=None, help="Folder for files that could not be processed.")
     parser.add_argument("--interval-seconds", type=int, default=600, help="Polling interval in seconds. Default: 600.")
     parser.add_argument("--once", action="store_true", help="Process current XML files once and exit.")
@@ -357,16 +365,24 @@ def main() -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-    failed_dir = args.failed or args.archive.parent / "failed_xml"
-    ensure_directories(args.input, args.archive, args.pdf, failed_dir)
+    root_dir = args.root
+    failed_dir = args.failed or root_dir / "failed_xml"
+    ensure_directories(root_dir, failed_dir)
+
+    def process_root_folders() -> None:
+        machine_dirs = [args.input] if args.input else iter_machine_folders(root_dir)
+        for machine_dir in machine_dirs:
+            output_dir = root_dir / f"{machine_dir.name}_edit"
+            ensure_directories(machine_dir, output_dir, failed_dir)
+            process_directory(machine_dir, output_dir, failed_dir)
 
     if args.once:
-        process_directory(args.input, args.archive, args.pdf, failed_dir)
+        process_root_folders()
         return 0
 
     while True:
         try:
-            process_directory(args.input, args.archive, args.pdf, failed_dir)
+            process_root_folders()
         except Exception as exc:  # pragma: no cover
             LOGGER.exception("Unexpected error during processing: %s", exc)
         time.sleep(args.interval_seconds)
