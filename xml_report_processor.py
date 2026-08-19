@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from xml.etree import ElementTree as ET
 
-from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.pagesizes import A4, landscape, portrait
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -132,6 +132,7 @@ def extract_log_rows(root: ET.Element) -> List[Dict[str, str]]:
         phase = values.get("PHASE", "")
         if phase:
             current_phase = phase
+            records.append({"TIME": "", "CT": "", "CP": "", "PHASE": phase})
             continue
 
         record: Dict[str, str] = {
@@ -205,6 +206,80 @@ def draw_barcode_like_pattern(c: canvas.Canvas, x_mm: float, y_mm: float, width_
         if idx % 3 == 0:
             c.setFillColorRGB(0, 0, 0)
             c.rect(x + idx * bar_width, y, bar_width, height_mm * mm, stroke=0, fill=1)
+
+
+def draw_detail_page_header(c: canvas.Canvas, page_width: float, page_height: float, font_name: str, batch_number: str, page_number: int) -> None:
+    c.setFillColorRGB(0.05, 0.05, 0.05)
+    c.setFont(font_name, 22)
+    c.drawString(12 * mm, page_height - 18 * mm, "T-DOC")
+    c.setFont(font_name, 9)
+    c.drawString(102 * mm, page_height - 10 * mm, "vsázka:")
+    c.drawString(122 * mm, page_height - 10 * mm, batch_number)
+    c.setFont(font_name, 8)
+    c.drawRightString(page_width - 12 * mm, page_height - 18 * mm, "GETINGE")
+    c.drawRightString(page_width - 12 * mm, page_height - 29 * mm, f"STRANA {page_number}")
+    draw_barcode_like_pattern(c, 107, 266, 54, 12)
+
+
+def draw_detail_pages(c: canvas.Canvas, font_name: str, metadata: Dict[str, str], rows: List[Dict[str, str]]) -> None:
+    page_width, page_height = portrait(A4)
+    c.setPageSize((page_width, page_height))
+    page_number = 1
+    batch_number = metadata.get("Batch", "-")
+
+    def start_page() -> float:
+        nonlocal page_number
+        draw_detail_page_header(c, page_width, page_height, font_name, batch_number, page_number)
+        page_number += 1
+        c.setFont(font_name, 8)
+        return page_height - 40 * mm
+
+    y = start_page()
+    start_time = metadata.get("Start time", "-")
+    date_value = start_time.split(" ", 1)[0] if start_time != "-" else "-"
+    time_value = start_time.split(" ", 1)[1] if " " in start_time else start_time
+    machine = metadata.get("Machine", "-")
+    cycle = metadata.get("Cycle", "-")
+    program = metadata.get("Program", "-")
+    program_name = metadata.get("Program name", "-")
+
+    c.setFont(font_name, 8)
+    detail_lines = [
+        "46-Series",
+        "",
+        f"DATUM             : {date_value}",
+        f"ZACATEK PROCESU   : {time_value}",
+        "SIGNALY",
+        f"{metadata.get('Error code', '0')} {metadata.get('Error text', 'None')}",
+        f"NAZEV PRISTROJE   : {machine}",
+        f"CITAC CYKLU       : {cycle}",
+        "",
+        "PARAMETRY",
+        f"CAS EXPOZICE      : {metadata.get('Exposure time', '-')}",
+        f"TEPLOTA EXPOZICE  : {metadata.get('Exposure temp.', '-')} C",
+        f"PROGRAM           : {program}  {program_name}",
+        "-" * 76,
+        f"CAS PROG  {program}",
+    ]
+    for line in detail_lines:
+        c.drawString(12 * mm, y, line)
+        y -= 4.6 * mm
+
+    for row in rows:
+        if y < 18 * mm:
+            c.showPage()
+            y = start_page()
+        phase = row.get("PHASE", "")
+        if not row.get("TIME"):
+            c.setFont(font_name, 8)
+            c.drawString(12 * mm, y, phase)
+        else:
+            time_text = row.get("TIME", "")
+            ct_text = row.get("CT", "")
+            cp_text = row.get("CP", "")
+            value_text = f"{time_text:<10} {ct_text:<8} {cp_text:<8}".rstrip()
+            c.drawString(12 * mm, y, value_text)
+        y -= 4.2 * mm
 
 
 def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str], rows: List[Dict[str, str]]) -> None:
@@ -358,6 +433,8 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
         max_cp_label = f"Max CP = {max(cp_values):.3f} bar" if cp_values else "Max CP = -"
         c.drawString(110 * mm, 92 * mm, max_cp_label)
 
+    c.showPage()
+    draw_detail_pages(c, text_font, metadata, rows)
     c.save()
 
 
