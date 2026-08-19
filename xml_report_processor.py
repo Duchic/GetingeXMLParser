@@ -335,9 +335,11 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
         c.drawString(110 * mm, 96 * mm, "TLAK V KOMORE")
 
         c.setFillColorRGB(0.1, 0.5, 0.9)
-        c.drawString(25 * mm, 92 * mm, f"Max CT = {max(ct_values):.1f} °C")
+        max_ct_label = f"Max CT = {max(ct_values):.1f} °C" if ct_values else "Max CT = -"
+        c.drawString(25 * mm, 92 * mm, max_ct_label)
         c.setFillColorRGB(0.9, 0.45, 0.0)
-        c.drawString(110 * mm, 92 * mm, f"Max CP = {max(cp_values):.3f} bar")
+        max_cp_label = f"Max CP = {max(cp_values):.3f} bar" if cp_values else "Max CP = -"
+        c.drawString(110 * mm, 92 * mm, max_cp_label)
 
     c.save()
 
