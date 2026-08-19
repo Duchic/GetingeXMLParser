@@ -31,6 +31,7 @@ from xml.etree import ElementTree as ET
 
 from reportlab.lib.pagesizes import A4, landscape, portrait
 from reportlab.lib.units import mm
+from reportlab.graphics.barcode import code128
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
@@ -213,14 +214,15 @@ def parse_time_to_minutes(value: str) -> float:
         return 0.0
 
 
-def draw_barcode_like_pattern(c: canvas.Canvas, x_mm: float, y_mm: float, width_mm: float, height_mm: float) -> None:
-    x = x_mm * mm
-    y = y_mm * mm
-    bar_width = 1.2
-    for idx in range(0, 120):
-        if idx % 3 == 0:
-            c.setFillColorRGB(0, 0, 0)
-            c.rect(x + idx * bar_width, y, bar_width, height_mm * mm, stroke=0, fill=1)
+def draw_barcode(c: canvas.Canvas, value: str, x_mm: float, y_mm: float, height_mm: float) -> None:
+    barcode_value = value if value and value != "-" else "0"
+    barcode = code128.Code128(
+        barcode_value,
+        barWidth=0.45 * mm,
+        barHeight=height_mm * mm,
+        humanReadable=False,
+    )
+    barcode.drawOn(c, x_mm * mm, y_mm * mm)
 
 
 def draw_detail_page_header(c: canvas.Canvas, page_width: float, page_height: float, font_name: str, batch_number: str, page_number: int) -> None:
@@ -233,7 +235,7 @@ def draw_detail_page_header(c: canvas.Canvas, page_width: float, page_height: fl
     c.setFont(font_name, 8)
     c.drawRightString(page_width - 12 * mm, page_height - 18 * mm, "GETINGE")
     c.drawRightString(page_width - 12 * mm, page_height - 29 * mm, f"STRANA {page_number}")
-    draw_barcode_like_pattern(c, 107, 266, 54, 12)
+    draw_barcode(c, batch_number, 107, 266, 12)
 
 
 def draw_detail_pages(c: canvas.Canvas, font_name: str, metadata: Dict[str, str], rows: List[Dict[str, str]]) -> None:
@@ -323,9 +325,8 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
     c.drawString(left_x * mm, top_y - 34 * mm, "vsázka:")
     c.drawRightString(page_width - 25 * mm, top_y - 34 * mm, "GETINGE")
 
-    draw_barcode_like_pattern(c, 95, 190, 64, 14)
-
     batch_number = metadata.get("Batch", "-")
+    draw_barcode(c, batch_number, 95, 190, 14)
     c.setFillColorRGB(0.96, 0.96, 0.96)
     c.rect(18 * mm, 145 * mm, 112 * mm, 32 * mm, stroke=1, fill=1)
     c.setStrokeColorRGB(0, 0, 0)
