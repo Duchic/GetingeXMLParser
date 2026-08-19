@@ -308,11 +308,11 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
             if row["_CT_VALUE"] is not None
         ]
         if len(points_ct) > 1:
-            c.beginPath()
-            c.moveTo(points_ct[0][0], points_ct[0][1])
+            path = c.beginPath()
+            path.moveTo(points_ct[0][0], points_ct[0][1])
             for px, py in points_ct[1:]:
-                c.lineTo(px, py)
-            c.drawPath()
+                path.lineTo(px, py)
+            c.drawPath(path)
 
         c.setStrokeColorRGB(0.9, 0.45, 0.0)
         c.setFillColorRGB(0.9, 0.45, 0.0)
@@ -322,11 +322,11 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
             if row["_CP_VALUE"] is not None
         ]
         if len(points_cp) > 1:
-            c.beginPath()
-            c.moveTo(points_cp[0][0], points_cp[0][1])
+            path = c.beginPath()
+            path.moveTo(points_cp[0][0], points_cp[0][1])
             for px, py in points_cp[1:]:
-                c.lineTo(px, py)
-            c.drawPath()
+                path.lineTo(px, py)
+            c.drawPath(path)
 
         c.setFont("Helvetica", 8)
         c.setFillColorRGB(0.1, 0.5, 0.9)
