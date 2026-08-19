@@ -31,9 +31,22 @@ from xml.etree import ElementTree as ET
 
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
 LOGGER = logging.getLogger("xml_report_processor")
+
+
+def register_czech_font() -> str:
+    font_path = Path(r"C:\Windows\Fonts\arial.ttf")
+    if font_path.exists():
+        try:
+            pdfmetrics.registerFont(TTFont("ArialCzech", str(font_path)))
+            return "ArialCzech"
+        except Exception:
+            LOGGER.warning("Could not load Arial from %s", font_path)
+    return "Helvetica"
 
 
 def local_name(tag: str) -> str:
@@ -197,6 +210,7 @@ def draw_barcode_like_pattern(c: canvas.Canvas, x_mm: float, y_mm: float, width_
 def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str], rows: List[Dict[str, str]]) -> None:
     c = canvas.Canvas(str(pdf_path), pagesize=landscape(A4))
     page_width, page_height = landscape(A4)
+    text_font = register_czech_font()
 
     c.setTitle(f"Sterilization report - {source_path.name}")
     c.setFillColorRGB(0.12, 0.12, 0.12)
@@ -232,7 +246,7 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
     start_time = metadata.get("Start time", "-")
     end_time = metadata.get("End time", "-")
 
-    c.setFont("Helvetica", 10)
+    c.setFont(text_font, 10)
     c.drawString(148 * mm, 176 * mm, f"{machine}")
     c.drawString(148 * mm, 168 * mm, f"Cykl {cycle}")
     c.drawString(148 * mm, 160 * mm, f"program {program}")
