@@ -570,11 +570,20 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=Path(r"D:\TDOC_Export"), help="Root directory containing machine folders 001..009.")
     parser.add_argument("--input", type=Path, default=None, help="Optional specific input folder to process instead of all 001..009 machine folders.")
     parser.add_argument("--failed", type=Path, default=None, help="Folder for files that could not be processed.")
+    parser.add_argument("--log-file", type=Path, default=None, help="Optional file for persistent application logs.")
     parser.add_argument("--interval-seconds", type=int, default=600, help="Polling interval in seconds. Default: 600.")
     parser.add_argument("--once", action="store_true", help="Process current XML files once and exit.")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    log_handlers: List[logging.Handler] = [logging.StreamHandler()]
+    if args.log_file:
+        args.log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_handlers.append(logging.FileHandler(args.log_file, encoding="utf-8"))
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=log_handlers,
+    )
 
     root_dir = args.root
     failed_dir = args.failed or root_dir / "failed_xml"
