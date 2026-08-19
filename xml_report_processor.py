@@ -89,18 +89,26 @@ def extract_log_rows(root: ET.Element) -> List[Dict[str, str]]:
     if cycle_data is None:
         return []
 
-    log_data = next((child for child in cycle_data if local_name(child.tag) == "LOGDATA"), None)
+    log_data = next((element for element in cycle_data.iter() if local_name(element.tag) == "LOGDATA"), None)
     if log_data is None:
         return []
 
     records: List[Dict[str, str]] = []
     current_phase = ""
+    discovered_tags = set()
 
-    for row in log_data:
-        if local_name(row.tag) != "ROW":
+    for row in log_data.iter():
+        discovered_tags.add(local_name(row.tag))
+        children = list(row)
+        direct_values = {local_name(child.tag): safe_text(child) for child in children}
+        is_row = local_name(row.tag) == "ROW"
+        has_measurements = "TIME" in direct_values and ("CT" in direct_values or "CP" in direct_values)
+        if not is_row and not has_measurements:
             continue
 
-        values = {local_name(child.tag): safe_text(child) for child in row}
+        values = direct_values
+        if is_row:
+            values = {local_name(child.tag): safe_text(child) for child in row.iter() if child is not row}
         phase = values.get("PHASE", "")
         if phase:
             current_phase = phase
@@ -115,6 +123,8 @@ def extract_log_rows(root: ET.Element) -> List[Dict[str, str]]:
         if record["TIME"] or record["CT"] or record["CP"]:
             records.append(record)
 
+    if not records:
+        LOGGER.warning("No measurement records found. LOGDATA tags: %s", ", ".join(sorted(discovered_tags)))
     return records
 
 
@@ -337,6 +347,9 @@ def get_unique_destination(directory: Path, file_name: str) -> Path:
 def process_xml_file(xml_path: Path, output_dir: Path, failed_dir: Path) -> bool:
     try:
         parsed = parse_xml_file(xml_path)
+        if not parsed["rows"]:
+            raise ValueError("XML obsahuje 0 logových řádků; PDF nebylo vytvořeno.")
+
         pdf_path = get_unique_destination(output_dir, f"{xml_path.stem}.pdf")
         build_pdf_report(pdf_path, xml_path, parsed["metadata"], parsed["rows"])
 
