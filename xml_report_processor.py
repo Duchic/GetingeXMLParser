@@ -268,7 +268,10 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
         cp_values = [row["_CP_VALUE"] for row in valid_rows if row["_CP_VALUE"] is not None]
 
         x_min, x_max = 0.0, max(60.0, max(times) if times else 60.0)
-        y_ct_min, y_ct_max = 60.0, max(140.0, max(ct_values) if ct_values else 140.0)
+        min_ct = min(ct_values) if ct_values else 60.0
+        max_ct = max(ct_values) if ct_values else 140.0
+        y_ct_min = min(60.0, float(int(min_ct // 10) * 10))
+        y_ct_max = max(140.0, float(((int(max_ct) + 9) // 10) * 10))
         y_cp_min, y_cp_max = 0.0, max(3.5, max(cp_values) if cp_values else 3.5)
 
         def map_x(value: float) -> float:
@@ -293,9 +296,9 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
             c.drawString(chart_x + (chart_width * tick / 6) - 3 * mm, chart_y - 5 * mm, f"{int(value)}")
 
         c.setFont("Helvetica", 8)
-        c.drawRightString(chart_x - 3 * mm, chart_y + chart_height - 3 * mm, "140")
-        c.drawRightString(chart_x - 3 * mm, chart_y + chart_height / 2, "100")
-        c.drawRightString(chart_x - 3 * mm, chart_y + 3 * mm, "60")
+        c.drawRightString(chart_x - 3 * mm, chart_y + chart_height - 3 * mm, f"{y_ct_max:.0f}")
+        c.drawRightString(chart_x - 3 * mm, chart_y + chart_height / 2, f"{(y_ct_min + y_ct_max) / 2:.0f}")
+        c.drawRightString(chart_x - 3 * mm, chart_y + 3 * mm, f"{y_ct_min:.0f}")
 
         c.setFont("Helvetica", 8)
         c.drawString(chart_x + chart_width - 16 * mm, chart_y + chart_height + 4 * mm, "min")
