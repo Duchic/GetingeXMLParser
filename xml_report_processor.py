@@ -113,6 +113,16 @@ def extract_log_rows(root: ET.Element) -> List[Dict[str, str]]:
     if log_data is None:
         return []
 
+    log_fields = next(
+        (element for element in root.iter() if local_name(element.tag) == "LOGFIELDS"),
+        None,
+    )
+    declared_fields = {
+        element.attrib.get("fieldname", "").upper()
+        for element in (log_fields.iter() if log_fields is not None else [])
+        if local_name(element.tag) == "FIELD" and element.attrib.get("fieldname")
+    }
+    numeric_fields = declared_fields - {"TIME", "PHASE"}
     records: List[Dict[str, str]] = []
     current_phase = ""
     discovered_tags = set()
@@ -122,7 +132,9 @@ def extract_log_rows(root: ET.Element) -> List[Dict[str, str]]:
         children = list(row)
         direct_values = {local_name(child.tag): safe_text(child) for child in children}
         is_row = local_name(row.tag) == "ROW"
-        has_measurements = "TIME" in direct_values and ("CT" in direct_values or "CP" in direct_values)
+        has_measurements = "TIME" in direct_values and any(
+            parse_decimal(direct_values.get(field, "")) is not None for field in numeric_fields
+        )
         if not is_row and not has_measurements:
             continue
 
@@ -141,6 +153,10 @@ def extract_log_rows(root: ET.Element) -> List[Dict[str, str]]:
             "CP": first_value(values, ["CP", "PRESSURE", "TLAK"]),
             "PHASE": current_phase or "N/A",
         }
+        candidate_fields = set(numeric_fields) | set(values)
+        for field in candidate_fields - {"TIME", "PHASE", "CT", "CP", "TEMP", "TEMPERATURE", "TEPLOTA", "PRESSURE", "TLAK"}:
+            if values.get(field) and parse_decimal(values[field]) is not None:
+                record[field] = values[field]
         if record["TIME"] and (record["CT"] or record["CP"]):
             records.append(record)
 
@@ -165,14 +181,13 @@ def summarize_log_rows(rows: List[Dict[str, str]]) -> Dict[str, Any]:
 
 
 def has_graph_data(rows: List[Dict[str, str]]) -> bool:
-    return any(
-        row.get("TIME")
-        and (
-            parse_decimal(row.get("CT", "")) is not None
-            or parse_decimal(row.get("CP", "")) is not None
-        )
-        for row in rows
-    )
+    for row in rows:
+        if not row.get("TIME"):
+            continue
+        for field_name, value in row.items():
+            if field_name not in {"TIME", "PHASE"} and parse_decimal(value) is not None:
+                return True
+    return False
 
 
 def add_multiline_text(canvas: canvas.Canvas, x_mm: float, y_mm: float, lines: List[str], font_name: str = "Helvetica", font_size: int = 9, line_gap: float = 5) -> float:
@@ -277,7 +292,13 @@ def draw_detail_pages(c: canvas.Canvas, font_name: str, metadata: Dict[str, str]
             time_text = row.get("TIME", "")
             ct_text = row.get("CT", "")
             cp_text = row.get("CP", "")
-            value_text = f"{time_text:<10} {ct_text:<8} {cp_text:<8}".rstrip()
+            known_fields = {"TIME", "CT", "CP", "PHASE"}
+            extra_text = " ".join(
+                f"{field}={value}"
+                for field, value in row.items()
+                if field not in known_fields and value
+            )
+            value_text = f"{time_text:<10} {ct_text:<8} {cp_text:<8} {extra_text}".rstrip()
             c.drawString(12 * mm, y, value_text)
         y -= 4.2 * mm
 
@@ -347,7 +368,12 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
         time_value = parse_time_to_minutes(row.get("TIME", ""))
         ct_value = parse_decimal(row.get("CT", ""))
         cp_value = parse_decimal(row.get("CP", ""))
-        if row.get("TIME") and (ct_value is not None or cp_value is not None):
+        extra_values = [
+            parse_decimal(value)
+            for field_name, value in row.items()
+            if field_name not in {"TIME", "CT", "CP", "PHASE"}
+        ]
+        if row.get("TIME") and (ct_value is not None or cp_value is not None or any(value is not None for value in extra_values)):
             valid_rows.append({**row, "_TIME_MINUTES": time_value, "_CT_VALUE": ct_value, "_CP_VALUE": cp_value})
 
     LOGGER.info("Loaded %d graph rows from %s", len(valid_rows), source_path.name)
@@ -419,6 +445,38 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
             for px, py in points_cp[1:]:
                 path.lineTo(px, py)
             c.drawPath(path)
+
+        known_fields = {"TIME", "CT", "CP", "PHASE", "_TIME_MINUTES", "_CT_VALUE", "_CP_VALUE"}
+        extra_fields = sorted({key for row in valid_rows for key in row if key not in known_fields})
+        extra_colors = [
+            (0.1, 0.65, 0.25),
+            (0.55, 0.15, 0.75),
+            (0.85, 0.55, 0.05),
+            (0.05, 0.55, 0.65),
+        ]
+        for index, field_name in enumerate(extra_fields):
+            points = []
+            for row in valid_rows:
+                value = parse_decimal(row.get(field_name, ""))
+                if value is not None:
+                    points.append((map_x(row["_TIME_MINUTES"]), value))
+            if len(points) < 2:
+                continue
+
+            use_pressure_axis = any(word in field_name for word in ("PRESSURE", "PRES", "TLAK", "CP"))
+            mapper = map_cp if use_pressure_axis else map_ct
+            color = extra_colors[index % len(extra_colors)]
+            c.setStrokeColorRGB(*color)
+            path = c.beginPath()
+            path.moveTo(points[0][0], mapper(points[0][1]))
+            for px, py in points[1:]:
+                path.lineTo(px, mapper(py))
+            c.drawPath(path)
+
+            c.setFillColorRGB(*color)
+            legend_x = 25 + (index % 3) * 60
+            legend_y = 88 - (index // 3) * 4
+            c.drawString(legend_x * mm, legend_y * mm, field_name)
 
         c.setFont("Helvetica", 8)
         c.setFillColorRGB(0.1, 0.5, 0.9)
