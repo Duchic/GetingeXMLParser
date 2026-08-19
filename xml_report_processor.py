@@ -35,6 +35,10 @@ from reportlab.pdfgen import canvas
 LOGGER = logging.getLogger("xml_report_processor")
 
 
+def local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1].upper()
+
+
 def safe_text(node: Optional[ET.Element]) -> str:
     if node is None or node.text is None:
         return ""
@@ -51,7 +55,7 @@ def parse_decimal(value: str) -> Optional[float]:
 
 
 def extract_cycle_metadata(root: ET.Element) -> Dict[str, str]:
-    cycle_data = root.find(".//CYCLEDATA")
+    cycle_data = next((element for element in root.iter() if local_name(element.tag) == "CYCLEDATA"), None)
     if cycle_data is None:
         raise ValueError("No <CYCLEDATA> element found in XML.")
 
@@ -73,7 +77,7 @@ def extract_cycle_metadata(root: ET.Element) -> Dict[str, str]:
 
     result: Dict[str, str] = {}
     for label, tag_name in tags:
-        element = cycle_data.find(tag_name)
+        element = next((child for child in cycle_data if local_name(child.tag) == tag_name), None)
         text = safe_text(element)
         if text:
             result[label] = text
@@ -81,27 +85,31 @@ def extract_cycle_metadata(root: ET.Element) -> Dict[str, str]:
 
 
 def extract_log_rows(root: ET.Element) -> List[Dict[str, str]]:
-    cycle_data = root.find(".//CYCLEDATA")
+    cycle_data = next((element for element in root.iter() if local_name(element.tag) == "CYCLEDATA"), None)
     if cycle_data is None:
         return []
 
-    log_data = cycle_data.find("LOGDATA")
+    log_data = next((child for child in cycle_data if local_name(child.tag) == "LOGDATA"), None)
     if log_data is None:
         return []
 
     records: List[Dict[str, str]] = []
     current_phase = ""
 
-    for row in log_data.findall("ROW"):
-        phase = safe_text(row.find("PHASE"))
+    for row in log_data:
+        if local_name(row.tag) != "ROW":
+            continue
+
+        values = {local_name(child.tag): safe_text(child) for child in row}
+        phase = values.get("PHASE", "")
         if phase:
             current_phase = phase
             continue
 
         record: Dict[str, str] = {
-            "TIME": safe_text(row.find("TIME")),
-            "CT": safe_text(row.find("CT")),
-            "CP": safe_text(row.find("CP")),
+            "TIME": values.get("TIME", ""),
+            "CT": values.get("CT", ""),
+            "CP": values.get("CP", ""),
             "PHASE": current_phase or "N/A",
         }
         if record["TIME"] or record["CT"] or record["CP"]:
@@ -113,6 +121,8 @@ def extract_log_rows(root: ET.Element) -> List[Dict[str, str]]:
 def summarize_log_rows(rows: List[Dict[str, str]]) -> Dict[str, Any]:
     numeric_ct = [parse_decimal(item["CT"]) for item in rows if item.get("CT")]
     numeric_cp = [parse_decimal(item["CP"]) for item in rows if item.get("CP")]
+    numeric_ct = [value for value in numeric_ct if value is not None]
+    numeric_cp = [value for value in numeric_cp if value is not None]
 
     summary = {
         "record_count": len(rows),
@@ -215,11 +225,19 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
     c.setStrokeColorRGB(0.7, 0.7, 0.7)
     c.rect(chart_x, chart_y, chart_width, chart_height, stroke=1, fill=0)
 
-    valid_rows = [row for row in rows if row.get("TIME") and row.get("CT") and row.get("CP")]
+    valid_rows = []
+    for row in rows:
+        time_value = parse_time_to_minutes(row.get("TIME", ""))
+        ct_value = parse_decimal(row.get("CT", ""))
+        cp_value = parse_decimal(row.get("CP", ""))
+        if row.get("TIME") and ct_value is not None and cp_value is not None:
+            valid_rows.append({**row, "_TIME_MINUTES": time_value, "_CT_VALUE": ct_value, "_CP_VALUE": cp_value})
+
+    LOGGER.info("Loaded %d graph rows from %s", len(valid_rows), source_path.name)
     if valid_rows:
-        times = [parse_time_to_minutes(row["TIME"]) for row in valid_rows]
-        ct_values = [float(row["CT"]) for row in valid_rows if row.get("CT")]
-        cp_values = [float(row["CP"]) for row in valid_rows if row.get("CP")]
+        times = [row["_TIME_MINUTES"] for row in valid_rows]
+        ct_values = [row["_CT_VALUE"] for row in valid_rows]
+        cp_values = [row["_CP_VALUE"] for row in valid_rows]
 
         x_min, x_max = 0.0, max(60.0, max(times) if times else 60.0)
         y_ct_min, y_ct_max = 60.0, max(140.0, max(ct_values) if ct_values else 140.0)
@@ -256,7 +274,7 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
 
         c.setStrokeColorRGB(0.1, 0.5, 0.9)
         c.setFillColorRGB(0.1, 0.5, 0.9)
-        points_ct = [(map_x(parse_time_to_minutes(row["TIME"])), map_ct(float(row["CT"]))) for row in valid_rows]
+        points_ct = [(map_x(row["_TIME_MINUTES"]), map_ct(row["_CT_VALUE"])) for row in valid_rows]
         if len(points_ct) > 1:
             c.beginPath()
             c.moveTo(points_ct[0][0], points_ct[0][1])
@@ -266,7 +284,7 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
 
         c.setStrokeColorRGB(0.9, 0.45, 0.0)
         c.setFillColorRGB(0.9, 0.45, 0.0)
-        points_cp = [(map_x(parse_time_to_minutes(row["TIME"])), map_cp(float(row["CP"]))) for row in valid_rows]
+        points_cp = [(map_x(row["_TIME_MINUTES"]), map_cp(row["_CP_VALUE"])) for row in valid_rows]
         if len(points_cp) > 1:
             c.beginPath()
             c.moveTo(points_cp[0][0], points_cp[0][1])
