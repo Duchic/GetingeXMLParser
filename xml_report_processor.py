@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import shutil
 import sys
 import time
@@ -48,10 +49,16 @@ def safe_text(node: Optional[ET.Element]) -> str:
 def parse_decimal(value: str) -> Optional[float]:
     if not value:
         return None
-    try:
-        return float(value.replace(",", "."))
-    except ValueError:
-        return None
+    normalized = value.replace(",", ".")
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", normalized)
+    return float(match.group(0)) if match else None
+
+
+def first_value(values: Dict[str, str], names: List[str]) -> str:
+    for name in names:
+        if values.get(name):
+            return values[name]
+    return ""
 
 
 def extract_cycle_metadata(root: ET.Element) -> Dict[str, str]:
@@ -115,9 +122,9 @@ def extract_log_rows(root: ET.Element) -> List[Dict[str, str]]:
             continue
 
         record: Dict[str, str] = {
-            "TIME": values.get("TIME", ""),
-            "CT": values.get("CT", ""),
-            "CP": values.get("CP", ""),
+            "TIME": first_value(values, ["TIME", "TIMESTAMP", "ELAPSEDTIME"]),
+            "CT": first_value(values, ["CT", "TEMP", "TEMPERATURE", "TEPLOTA"]),
+            "CP": first_value(values, ["CP", "PRESSURE", "TLAK"]),
             "PHASE": current_phase or "N/A",
         }
         if record["TIME"] and (record["CT"] or record["CP"]):
@@ -146,8 +153,10 @@ def summarize_log_rows(rows: List[Dict[str, str]]) -> Dict[str, Any]:
 def has_graph_data(rows: List[Dict[str, str]]) -> bool:
     return any(
         row.get("TIME")
-        and parse_decimal(row.get("CT", "")) is not None
-        and parse_decimal(row.get("CP", "")) is not None
+        and (
+            parse_decimal(row.get("CT", "")) is not None
+            or parse_decimal(row.get("CP", "")) is not None
+        )
         for row in rows
     )
 
@@ -249,14 +258,14 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
         time_value = parse_time_to_minutes(row.get("TIME", ""))
         ct_value = parse_decimal(row.get("CT", ""))
         cp_value = parse_decimal(row.get("CP", ""))
-        if row.get("TIME") and ct_value is not None and cp_value is not None:
+        if row.get("TIME") and (ct_value is not None or cp_value is not None):
             valid_rows.append({**row, "_TIME_MINUTES": time_value, "_CT_VALUE": ct_value, "_CP_VALUE": cp_value})
 
     LOGGER.info("Loaded %d graph rows from %s", len(valid_rows), source_path.name)
     if valid_rows:
         times = [row["_TIME_MINUTES"] for row in valid_rows]
-        ct_values = [row["_CT_VALUE"] for row in valid_rows]
-        cp_values = [row["_CP_VALUE"] for row in valid_rows]
+        ct_values = [row["_CT_VALUE"] for row in valid_rows if row["_CT_VALUE"] is not None]
+        cp_values = [row["_CP_VALUE"] for row in valid_rows if row["_CP_VALUE"] is not None]
 
         x_min, x_max = 0.0, max(60.0, max(times) if times else 60.0)
         y_ct_min, y_ct_max = 60.0, max(140.0, max(ct_values) if ct_values else 140.0)
@@ -293,7 +302,11 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
 
         c.setStrokeColorRGB(0.1, 0.5, 0.9)
         c.setFillColorRGB(0.1, 0.5, 0.9)
-        points_ct = [(map_x(row["_TIME_MINUTES"]), map_ct(row["_CT_VALUE"])) for row in valid_rows]
+        points_ct = [
+            (map_x(row["_TIME_MINUTES"]), map_ct(row["_CT_VALUE"]))
+            for row in valid_rows
+            if row["_CT_VALUE"] is not None
+        ]
         if len(points_ct) > 1:
             c.beginPath()
             c.moveTo(points_ct[0][0], points_ct[0][1])
@@ -303,7 +316,11 @@ def build_pdf_report(pdf_path: Path, source_path: Path, metadata: Dict[str, str]
 
         c.setStrokeColorRGB(0.9, 0.45, 0.0)
         c.setFillColorRGB(0.9, 0.45, 0.0)
-        points_cp = [(map_x(row["_TIME_MINUTES"]), map_cp(row["_CP_VALUE"])) for row in valid_rows]
+        points_cp = [
+            (map_x(row["_TIME_MINUTES"]), map_cp(row["_CP_VALUE"]))
+            for row in valid_rows
+            if row["_CP_VALUE"] is not None
+        ]
         if len(points_cp) > 1:
             c.beginPath()
             c.moveTo(points_cp[0][0], points_cp[0][1])
