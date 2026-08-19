@@ -120,7 +120,7 @@ def extract_log_rows(root: ET.Element) -> List[Dict[str, str]]:
             "CP": values.get("CP", ""),
             "PHASE": current_phase or "N/A",
         }
-        if record["TIME"] or record["CT"] or record["CP"]:
+        if record["TIME"] and (record["CT"] or record["CP"]):
             records.append(record)
 
     if not records:
@@ -141,6 +141,15 @@ def summarize_log_rows(rows: List[Dict[str, str]]) -> Dict[str, Any]:
         "max_cp": max(numeric_cp) if numeric_cp else None,
     }
     return summary
+
+
+def has_graph_data(rows: List[Dict[str, str]]) -> bool:
+    return any(
+        row.get("TIME")
+        and parse_decimal(row.get("CT", "")) is not None
+        and parse_decimal(row.get("CP", "")) is not None
+        for row in rows
+    )
 
 
 def add_multiline_text(canvas: canvas.Canvas, x_mm: float, y_mm: float, lines: List[str], font_name: str = "Helvetica", font_size: int = 9, line_gap: float = 5) -> float:
@@ -347,8 +356,8 @@ def get_unique_destination(directory: Path, file_name: str) -> Path:
 def process_xml_file(xml_path: Path, output_dir: Path, failed_dir: Path) -> bool:
     try:
         parsed = parse_xml_file(xml_path)
-        if not parsed["rows"]:
-            raise ValueError("XML obsahuje 0 logových řádků; PDF nebylo vytvořeno.")
+        if not has_graph_data(parsed["rows"]):
+            raise ValueError("XML neobsahuje žádné číselné řádky TIME + CT + CP; PDF nebylo vytvořeno.")
 
         pdf_path = get_unique_destination(output_dir, f"{xml_path.stem}.pdf")
         build_pdf_report(pdf_path, xml_path, parsed["metadata"], parsed["rows"])
